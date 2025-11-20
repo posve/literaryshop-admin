@@ -1,11 +1,13 @@
 'use client';
 
+
 import React, { useState, useEffect } from 'react';
 import { 
   Book, Package, LogOut, Plus, Edit2, Trash2, Save, X, Search, 
   AlertCircle, TrendingUp, DollarSign, ShoppingBag, Clock,
   CheckCircle, XCircle, Filter, Download, Eye, BarChart3
 } from 'lucide-react';
+import ImageManager from './image-manager';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
@@ -25,6 +27,7 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedBookForImages, setSelectedBookForImages] = useState(null);
 
   const [newBook, setNewBook] = useState({
     isbn: '',
@@ -98,7 +101,34 @@ export default function AdminDashboard() {
       const response = await fetch(`${API_URL}/books`);
       if (!response.ok) throw new Error('Failed to load books');
       const data = await response.json();
-      setBooks(data);
+
+      // Fetch primary images for each book
+      const booksWithImages = await Promise.all(
+        data.map(async (book) => {
+          try {
+            const imagesResponse = await fetch(`${API_URL}/books/${book.isbn}/images`);
+            if (imagesResponse.ok) {
+              const images = await imagesResponse.json();
+              // Find primary image, or use first image, or fall back to image_url
+              const primaryImage = images.find(img => img.is_primary);
+              const firstImage = images.length > 0 ? images[0] : null;
+              const displayImage = primaryImage?.scaleway_url || firstImage?.scaleway_url || book.image_url;
+
+              return {
+                ...book,
+                primary_image_url: displayImage,
+                has_scaleway_images: images.length > 0
+              };
+            }
+            return book;
+          } catch (err) {
+            // If image fetch fails, fall back to original image_url
+            return book;
+          }
+        })
+      );
+
+      setBooks(booksWithImages);
       setError(null);
     } catch (err) {
       setError('Failed to load books');
@@ -695,13 +725,20 @@ export default function AdminDashboard() {
                     </div>
                   ) : (
                     <div className="flex gap-4">
-                      {book.image_url && (
-                        <img 
-                          src={book.image_url} 
-                          alt={book.title} 
-                          className="w-20 h-28 object-cover rounded-lg"
-                          onError={(e) => { e.target.style.display = 'none'; }}
-                        />
+                      {(book.primary_image_url || book.image_url) && (
+                        <div className="relative">
+                          <img
+                            src={book.primary_image_url || book.image_url}
+                            alt={book.title}
+                            className="w-20 h-28 object-cover rounded-lg"
+                            onError={(e) => { e.target.style.display = 'none'; }}
+                          />
+                          {book.has_scaleway_images && (
+                            <span className="absolute top-1 right-1 bg-blue-500 text-white text-xs px-2 py-0.5 rounded">
+                              ☁️
+                            </span>
+                          )}
+                        </div>
                       )}
                       <div className="flex-1">
                         <div className="flex items-start justify-between">
@@ -716,6 +753,13 @@ export default function AdminDashboard() {
                             )}
                           </div>
                           <div className="flex gap-2">
+                            <button
+                              onClick={() => setSelectedBookForImages(book)}
+                              className="bg-purple-600 text-white px-3 py-1 rounded text-sm hover:bg-purple-700"
+                              title="Manage Images"
+                            >
+                              📷 Images
+                            </button>
                             <button
                               onClick={() => setEditingBook({...book})}
                               className="p-2 text-slate-600 hover:bg-slate-100 rounded-lg transition"
@@ -868,6 +912,37 @@ export default function AdminDashboard() {
           </div>
         )}
       </main>
+
+      {/* Image Manager Modal - Step 4 */}
+      {selectedBookForImages && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white border-b border-gray-200 p-4 flex justify-between items-center">
+              <h2 className="text-xl font-bold">
+                Manage Images - {selectedBookForImages.title}
+              </h2>
+              <button
+                onClick={() => setSelectedBookForImages(null)}
+                className="text-gray-500 hover:text-gray-700 text-2xl font-bold"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="p-4">
+              <ImageManager
+                isbn={selectedBookForImages.isbn}
+                token={token}
+                onImageUploadSuccess={(image) => {
+                  console.log('Image uploaded:', image);
+                  // Refresh books list to show updated image in inventory
+                  loadBooks();
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
